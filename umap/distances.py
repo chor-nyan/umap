@@ -3,9 +3,10 @@
 # License: BSD 3 clause
 import numpy as np
 import numba
-
+from scipy.stats import norm
 _mock_identity = np.eye(2, dtype=np.float64)
 _mock_ones = np.ones(2, dtype=np.float64)
+
 
 
 @numba.njit(fastmath=True)
@@ -19,6 +20,18 @@ def euclidean(x, y):
     for i in range(x.shape[0]):
         result += (x[i] - y[i]) ** 2
     return np.sqrt(result)
+
+@numba.jit()
+def mpg(x, y, idx1, idx2, *mu_sd):
+    # mu = mu_sd['mu']
+    # sd = mu_sd['sd']
+    mu = mu_sd[0]
+    sd = mu_sd[1]
+    dist = euclidean(x, y)
+    p1 = norm.sf(dist, mu[idx1], sd[idx1])
+    p2 = norm.sf(dist, mu[idx2], sd[idx2])
+
+    return 1 - p1 * p2
 
 
 @numba.njit()
@@ -348,6 +361,7 @@ def correlation(x, y):
 
 
 named_distances = {
+    "mpg": mpg,
     # general minkowski distances
     "euclidean": euclidean,
     "l2": euclidean,
