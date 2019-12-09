@@ -14,45 +14,40 @@ from scipy.spatial.distance import pdist, squareform
 from sklearn.datasets import fetch_openml
 import numba
 from numpy import linalg
+from hub_toolbox.distances import euclidean_distance
 
 mnist = fetch_openml('mnist_784', version=1)
 n = 100
 X = mnist.data[:n]
 L = mnist.target[:n].astype(int)
 
-@numba.jit()
-def EDM(X):
-    (n, _) = X.shape
+@numba.njit(fastmath=True)
+def suqeuclidean(x, y):
+    """Square euclidean distance.
 
-    D = np.zeros((n, n), )
-
-    # 上三角を埋めて,転置させたものを足す
-    for i in np.arange(0, n - 1):
-        for j in np.arange(i + 1, n):
-            D[i, j] = np.linalg.norm(X[i, :] - X[j, :])  # x[i,:].shape == (784,)
-
-    D = D + D.T
-
-    return D
-
+    """
+    result = 0.0
+    for i in range(x.shape[0]):
+        result += (x[i] - y[i]) ** 2
+    return result
 
 # Define KNN graph
 @numba.jit()
 def create_knngraph(X, k):
 
     n = X.shape[0]
-    D = EDM(X)
-    sortD = np.zeros((n, k), )
-    sortD_idx = np.zeros((n, k), dtype=int)
+    D = euclidean_distance(X)
+    neigh_dist = np.zeros((n, k), )
+    neigh_idx = np.zeros((n, k), dtype=int)
 
     for i in np.arange(0, n):
         d_vec = D[i, :]  # i-th row
         v = np.argsort(d_vec)  # 昇順にソートした配列のインデックス
-        sortD_idx[i, :] = v[1:k + 1]  # 距離が短い順にk個選ぶ（自分を除く）
-        sortD[i, :] = d_vec[sortD_idx[i, :]]
+        neigh_idx[i, :] = v[1:k + 1]  # 距離が短い順にk個選ぶ（自分を除く）
+        neigh_dist[i, :] = d_vec[neigh_idx[i, :]]
 
 
-    return sortD, sortD_idx
+    return neigh_dist, neigh_idx
 
 @numba.jit()
 def initialise_W(kD, knn_idx, sigma_type='median'):
@@ -143,30 +138,58 @@ def initialise_W(kD, knn_idx, sigma_type='median'):
 # # grad = 1/D
 # # grad = np.sum(grad, axis=0)
 
+# @numba.jit()
+# def calculate_grad(X, W, sigma):
+#     n, d = X.shape
+#     dWdsig = np.zeros((n, n, d))
+#     dDdsig = np.zeros((n, d))
+#
+#     for i in range(n):
+#         for j in range(n):
+#             for k in range(d):
+#                 dWdsig[i, j, k] = 2 * W[i, j] * (X[i, k] - X[j, k])**2 * sigma[0, k]**(-3)
+#
+#     for i in range(n):
+#         for k in range(d):
+#             dDdsig[i, k] = np.sum(dWdsig[i, :, k])
+#
+#     D = np.sum(W, axis=1).reshape((n, 1))
+#     # D = np.maximum(D, 1e-6)
+#     X_hat = (W @ X) / D
+#     grad = np.array([0.] * d).reshape((1, d))
+#     for p in range(d):
+#         for i in range(n):
+#             grad[0, p] += np.sum((X[i, :] - X_hat[i, :]) @ (dWdsig[i, :, p]@X - dDdsig[i, p] * X_hat[i]) / D[i])
+#
+#     return grad
+
 @numba.jit()
-def calculate_grad(X, W, sigma):
+def calculate_grad(X, W, neig_idx, sigma):  # sigma: n-dim vec
     n, d = X.shape
-    dWdsig = np.zeros((n, n, d))
-    dDdsig = np.zeros((n, d))
+    dWdsig = np.zeros((n, n, n))
+    dDdsig = np.zeros((n, n))
 
     for i in range(n):
         for j in range(n):
-            for k in range(d):
-                dWdsig[i, j, k] = 2 * W[i, j] * (X[i, k] - X[j, k])**2 * sigma[0, k]**(-3)
+            for k in range(n):
+                if i == k and j in neig_idx[i, :]:
+                    dWdsig[i, j, k] = 2 * W[i, j] * suqeuclidean(X[i, :], X[j, :]) * sigma[0, k]**(-3)
 
     for i in range(n):
-        for k in range(d):
-            dDdsig[i, k] = np.sum(dWdsig[i, :, k])
+        for k in range(n):
+            if i == k:
+                dDdsig[i, k] = np.sum(dWdsig[i, :, k])
 
     D = np.sum(W, axis=1).reshape((n, 1))
     # D = np.maximum(D, 1e-6)
     X_hat = (W @ X) / D
-    grad = np.array([0.] * d).reshape((1, d))
-    for p in range(d):
+    grad = np.array([0.] * n).reshape((1, n))
+    for p in range(n):
         for i in range(n):
             grad[0, p] += np.sum((X[i, :] - X_hat[i, :]) @ (dWdsig[i, :, p]@X - dDdsig[i, p] * X_hat[i]) / D[i])
 
     return grad
+
 
 @numba.jit()
 def obj_func(X, W, knn_idx):
@@ -187,16 +210,17 @@ sigma = np.array([sigma0] * X.shape[1]).reshape((1, X.shape[1]))
 f = obj_func(X, W, knn_idx)
 
 n = 100
+n_iter = 10
 x = np.linspace(0, 5, n)
 np.random.seed(seed = 32)
-stack = []  # プロット用のリスト
+# stack = []  # プロット用のリスト
 
-eta = 0.01  # ステップ幅
 
-for i in range(1):
+for i in range(n_iter):
     # プロット用のリスト
-    stack.append(sigma)
+    # stack.append(sigma)
     # print(calculate_grad(X, W, sigma).shape)
+    eta = 1/np.sqrt(n_iter)
     # パラメータ更新
     sigma = sigma - eta * calculate_grad(X, W, sigma)
     if sigma_type == 'median':

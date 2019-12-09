@@ -21,6 +21,19 @@ def euclidean(x, y):
         result += (x[i] - y[i]) ** 2
     return np.sqrt(result)
 
+@numba.njit(fastmath=True)
+def suqeuclidean(x, y):
+    """Standard euclidean distance.
+
+    ..math::
+        D(x, y) = \sqrt{\sum_i (x_i - y_i)^2}
+    """
+    result = 0.0
+    for i in range(x.shape[0]):
+        result += (x[i] - y[i]) ** 2
+    return result
+
+
 @numba.jit()
 def mpg(x, y, idx1, idx2, *mu_sd):
     # mu = mu_sd['mu']

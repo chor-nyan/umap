@@ -11,6 +11,12 @@ from sklearn.utils import check_random_state, check_array
 from sklearn.metrics import pairwise_distances
 from sklearn.preprocessing import normalize
 from sklearn.neighbors import KDTree
+import sys
+sys.path.append("/home/hino/anaconda3/lib/python3.7/site-packages")
+import sparse as sp
+import hub_toolbox
+from hub_toolbox.distances import euclidean_distance
+
 
 try:
     import joblib
@@ -22,6 +28,10 @@ import numpy as np
 import scipy.sparse
 import scipy.sparse.csgraph
 import numba
+from scipy.spatial.distance import euclidean as scieuc
+from skhubness.neighbors import kneighbors_graph
+
+from numpy import linalg
 
 import umap.distances as dist
 
@@ -53,6 +63,239 @@ INT32_MAX = np.iinfo(np.int32).max - 1
 SMOOTH_K_TOLERANCE = 1e-5
 MIN_K_DIST_SCALE = 1e-3
 NPY_INFINITY = np.inf
+
+# def initialize_AEW(
+#     knn_indices, knn_dists, sigmas
+# ):
+#
+#     n_samples = knn_indices.shape[0]
+#     n_neighbors = knn_indices.shape[1]
+#
+#     rows = np.zeros(knn_indices.size, dtype=np.int64)
+#     cols = np.zeros(knn_indices.size, dtype=np.int64)
+#     vals = np.zeros(knn_indices.size, dtype=np.float64)
+#
+#     for i in range(n_samples):
+#         for j in range(n_neighbors):
+#             if knn_indices[i, j] == -1:
+#                 continue  # We didn't get the full knn for i
+#             if knn_indices[i, j] == i:
+#                 val = 0.0
+#             else:
+#                 val = np.exp(
+#                     -(
+#                         ((knn_dists[i, j])
+#                         / (sigmas[i])) ** 2
+#                     )
+#                 )
+#
+#             rows[i * n_neighbors + j] = i
+#             cols[i * n_neighbors + j] = knn_indices[i, j]
+#             vals[i * n_neighbors + j] = val
+#
+#     return rows, cols, vals
+
+def initialize_AEW(
+    X, knn_indices, sigmas
+):
+
+    n_samples = knn_indices.shape[0]
+    n_neighbors = knn_indices.shape[1]
+
+    rows = np.zeros(knn_indices.size, dtype=np.int64)
+    cols = np.zeros(knn_indices.size, dtype=np.int64)
+    vals = np.zeros(knn_indices.size, dtype=np.float64)
+
+    knn_indices = knn_indices.astype(int)
+    # print(knn_indices)
+    print('error', np.sum(knn_indices > X.shape[0]))
+    for i in range(n_samples):
+        for j in range(n_neighbors):
+            if knn_indices[i, j] == -1:
+                continue  # We didn't get the full knn for i
+            elif knn_indices[i, j] == i:
+                val = 0.0
+            elif knn_indices[i, j] > X.shape[0]:
+                val = 1.0
+            else:
+                val = 0.0
+                for d in range(X.shape[1]):
+                    val += dist.suqeuclidean(X[i, :], X[knn_indices[i, j], :]) / sigmas[d] ** 2
+                val = np.exp(-val)
+
+
+
+                rows[i * n_neighbors + j] = i
+                cols[i * n_neighbors + j] = knn_indices[i, j]
+                vals[i * n_neighbors + j] = val
+
+    return rows, cols, vals
+
+# @numba.jit()
+# def calculate_grad(X, W, neig_idx, neig_dist, sigmas, rhos):  # sigma: n-dim vec
+#
+#     n = W.shape[0]
+#     dWdsig = np.zeros((n, n))
+#     dDdsig = np.zeros(n)
+#     print(neig_dist)
+#
+#     for i in range(n):
+#         for j in range(neig_idx.shape[1]):
+#             # dWdsig[i, neig_idx[i, j]] = (W[i, neig_idx[i, j]] * neig_dist[i, j] - rhos[i]) * sigmas[i]**(-2)
+#             dWdsig[i, neig_idx[i, j]] = 2 * (W[i, neig_idx[i, j]] * neig_dist[i, j] ** 2) * sigmas[i]**(-3)
+#
+#     for i in range(n):
+#         dDdsig[i] = np.sum(dWdsig[i, :])
+#
+#     # coord1 = np.zeros(neig_idx.size, dtype=np.int64)
+#     # coord2 = np.zeros(neig_idx.size, dtype=np.int64)
+#     # coord3 = np.zeros(neig_idx.size, dtype=np.int64)
+#     # vals = np.zeros(neig_idx.size, dtype=np.float64)
+#     #
+#     # for i in range(n):
+#     #     for j in range(neig_idx.shape[1]):
+#     #         # if neig_idx[i, j] == i:
+#     #         #     val = 0.0
+#     #         val = (W[i, neig_idx[i, j]] * neig_dist[i, j] - rhos[i]) * sigmas[i]**(-2)
+#     #
+#     #         coord1[i * neig_idx.shape[1] + j] = i
+#     #         coord2[i * neig_idx.shape[1] + j] = neig_idx[i, j]
+#     #         coord3[i * neig_idx.shape[1] + j] = i
+#     #         vals[i * neig_idx.shape[1] + j] = val
+#     #
+#     # dWdsig = sp.COO((coord1, coord2, coord3), vals, shape=(n, ) * 3)
+#     # print(dWdsig)
+#
+#
+#     D = np.sum(W, axis=1).reshape((n, 1))
+#     # D = np.maximum(D, 1e-6)
+#     # X_hat = (W @ X) / D
+#     X_hat = W.dot(X) / D
+#     grad = np.array([0.] * n).reshape((1, n))
+#     for p in range(n):
+#         # for i in range(n):
+#         # print((X[p, :] - X_hat[p, :]).shape, (dWdsig[p, :]@X - dDdsig[p] * X_hat[p, :]).shape)
+#         grad[0, p] += (X[p, :] - X_hat[p, :]) @ (dWdsig[p, :]@X - dDdsig[p] * X_hat[p, :]).T / D[p]
+#
+#     return grad
+
+@numba.jit()
+def calculate_grad(X, W, neig_idx, neig_dist, sigmas):  # sigma: n-dim vec
+
+    n = W.shape[0]
+    # dWdsig = np.zeros((n, n))
+    # dDdsig = np.zeros(n)
+    # print(neig_dist)
+    #
+    # for i in range(n):
+    #     for j in range(neig_idx.shape[1]):
+    #         # dWdsig[i, neig_idx[i, j]] = (W[i, neig_idx[i, j]] * neig_dist[i, j] - rhos[i]) * sigmas[i]**(-2)
+    #         dWdsig[i, neig_idx[i, j]] = 2 * (W[i, neig_idx[i, j]] * neig_dist[i, j] ** 2) * sigmas[i]**(-3)
+    #
+    # for i in range(n):
+    #     dDdsig[i] = np.sum(dWdsig[i, :])
+
+    coord1 = np.zeros(neig_idx.size * X.shape[1], dtype=np.int64)
+    coord2 = np.zeros(neig_idx.size * X.shape[1], dtype=np.int64)
+    coord3 = np.zeros(neig_idx.size * X.shape[1], dtype=np.int64)
+    vals = np.zeros(neig_idx.size * X.shape[1], dtype=np.float64)
+
+    for i in range(n):
+        for j in range(neig_idx.shape[1]):
+            # val = 2 * W[i, neig_idx[i, j]] * (X[i, :] - X[j, :]) ** 2 * sigmas ** (-3)
+            for d in range(X.shape[1]):
+                # if neig_idx[i, j] == i:
+                #     val = 0.0
+                val = 2 * W[i, neig_idx[i, j]] * (X[i, d] - X[j, d]) ** 2 * sigmas[d] ** (-3)
+                    # (W[i, neig_idx[i, j]] * neig_dist[i, j]) * sigmas[i]**(-2)
+
+                coord1[i * neig_idx.shape[1] * X.shape[1] + j * X.shape[1] + d] = i
+                coord2[i * neig_idx.shape[1] * X.shape[1] + j * X.shape[1] + d] = neig_idx[i, j]
+                coord3[i * neig_idx.shape[1] * X.shape[1] + j * X.shape[1] + d] = d
+                vals[i * neig_idx.shape[1] * X.shape[1] + j * X.shape[1] + d] = val
+
+    dWdsig = sp.COO((coord1, coord2, coord3), vals, shape=(n, n, X.shape[1]))
+    # dWdsig = dWdsig.todense()
+    print(dWdsig)
+
+    rows = np.zeros(X.shape[0] * X.shape[1], dtype=np.int64)
+    cols = np.zeros(X.shape[0] * X.shape[1], dtype=np.int64)
+    vals = np.zeros(X.shape[0] * X.shape[1], dtype=np.float64)
+
+    for i in range(X.shape[0]):
+        for d in range(X.shape[1]):
+            val = np.sum(dWdsig[i, :, d])
+
+            rows[i * X.shape[1] + d] = i
+            cols[i * X.shape[1] + d] = d
+            vals[i * X.shape[1] + d] = val
+
+    dDdsig = scipy.sparse.coo_matrix(
+            (vals, (rows, cols)), shape=(X.shape[0], X.shape[1])
+        )
+    dDdsig = dDdsig.tocsr()
+
+
+
+
+    D = np.sum(W, axis=1).reshape((n, 1))
+    # D = np.maximum(D, 1e-6)
+    # X_hat = (W @ X) / D
+    X_hat = W.dot(X) / D
+    grad = np.array([0.] * X.shape[1]).reshape((1, X.shape[1]))
+    for i in range(n):
+        for d in range(X.shape[1]):
+        # for j in range(neig_idx.shape[1]):
+        # for i in range(n):
+        # print((X[p, :] - X_hat[p, :]).shape, (dWdsig[p, :]@X - dDdsig[p] * X_hat[p, :]).shape)
+            grad[0, d] += (X[i, :] - X_hat[i, :]) @ (dWdsig[i, :, d]@X - dDdsig[i, d] * X_hat[i, :]).T / D[i]
+
+    return grad
+
+# @numba.jit()
+# def update_W(W, neig_idx, neig_dist, sigmas):
+#
+#     for i in range(W.shape[0]):
+#         for j in range(neig_idx.shape[1]):
+#             if W[i, neig_idx[i, j]] == -1:
+#                 pass
+#             #
+#             else:
+#                 # W[i, neig_idx[i, j]] = np.exp(
+#                 #     -(
+#                 #         (neig_dist[i, j] - rhos[i])
+#                 #         / (sigmas[i])
+#                 #     )
+#                 # )
+#                 W[i, neig_idx[i, j]] = np.exp(
+#                     -(
+#                         (neig_dist[i, j]
+#                             / (sigmas[i])) **2
+#                     )
+#                 )
+#     return W
+
+@numba.jit()
+def update_W(X, W, neig_idx, neig_dist, sigmas):
+
+    for i in range(W.shape[0]):
+        for j in range(neig_idx.shape[1]):
+            if W[i, neig_idx[i, j]] == -1:
+                pass
+            #
+            else:
+                # W[i, neig_idx[i, j]] = np.exp(
+                #     -(
+                #         (neig_dist[i, j] - rhos[i])
+                #         / (sigmas[i])
+                #     )
+                # )
+                val = 0.0
+                for d in range(X.shape[1]):
+                    val += dist.suqeuclidean(X[i, :], X[neig_idx[i, j], :]) / sigmas[d] ** 2
+                W[i, neig_idx[i, j]] = np.exp(-val)
+
+    return W
 
 
 @numba.njit(
@@ -211,8 +454,8 @@ def nearest_neighbors(
         print(ts(), "Finding Nearest Neighbors")
 
     if metric == "precomputed":
-        # Note that this does not support sparse distance matrices yet ...
-        # Compute indices of n nearest neighbors
+        # # Note that this does not support sparse distance matrices yet ...
+        # # Compute indices of n nearest neighbors
         # knn_indices = fast_knn_indices(X, n_neighbors)
         # # Compute the nearest neighbor distances
         # #   (equivalent to np.sort(X)[:,:n_neighbors])
@@ -220,8 +463,33 @@ def nearest_neighbors(
         #     np.arange(X.shape[0])[:, None], knn_indices
         # ].copy()
 
-        knn_indices = X.indices.astype(int).reshape((X.shape[0], n_neighbors))
-        knn_dists = X.data.reshape((X.shape[0], n_neighbors))
+        # MNIST or F-MNIST
+        neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=n_neighbors,
+                                          mode='distance', hubness='mutual_proximity',
+                                          hubness_params={'method': 'normal'})
+
+        # knn_indices = X.indices.astype(int).reshape((X.shape[0], n_neighbors))
+        # knn_dists = X.data.reshape((X.shape[0], n_neighbors))
+
+        knn_indices = neigbour_graph.indices.astype(int).reshape((X.shape[0], n_neighbors))
+        knn_dists = neigbour_graph.data.reshape((X.shape[0], n_neighbors))
+        for i in range(X.shape[0]):
+            for j in range(n_neighbors):
+                knn_dists[i, j] = scieuc(X[i, :], X[knn_indices[i, j], :])
+
+
+        # # COIL20 or SMALL-SAMPLE
+        # # D = euclidean_distance(X)
+        # D_mp = hub_toolbox.global_scaling.mutual_proximity_gaussi(D=X, metric='distance')
+        # knn_indices = fast_knn_indices(D_mp, n_neighbors)
+        # # Compute the nearest neighbor distances
+        # #   (equivalent to np.sort(X)[:,:n_neighbors])
+        # knn_dists = X[
+        #     np.arange(X.shape[0])[:, None], knn_indices
+        # ].copy()
+
+
+
 
         rp_forest = []
     else:
@@ -532,13 +800,61 @@ def fuzzy_simplicial_set(
         local_connectivity=local_connectivity,
     )
 
-    rows, cols, vals = compute_membership_strengths(
-        knn_indices, knn_dists, sigmas, rhos
-    )
+    AEW = False
+    if not AEW:
+        rows, cols, vals = compute_membership_strengths(
+            knn_indices, knn_dists, sigmas, rhos
+        )
 
-    result = scipy.sparse.coo_matrix(
-        (vals, (rows, cols)), shape=(X.shape[0], X.shape[0])
-    )
+        result = scipy.sparse.coo_matrix(
+            (vals, (rows, cols)), shape=(X.shape[0], X.shape[0])
+        )
+    else:
+        # knn_indices = np.asarray(knn_indices, dtype=np.int64)
+        # sigmas = np.array([np.median(knn_dists)] * len(sigmas))
+        sigmas = np.array([np.median(knn_dists)] * X.shape[1])
+        rows, cols, vals = initialize_AEW(
+            knn_indices, knn_dists, sigmas
+        )
+
+        result = scipy.sparse.coo_matrix(
+            (vals, (rows, cols)), shape=(X.shape[0], X.shape[0])
+        )
+
+    # print(sigmas)
+    # print(result)
+    if AEW:
+
+        result = result.tocsr()
+        n_iter = 1
+        for i in range(n_iter):
+            eta = 1 / np.sqrt(i + 1)
+            # パラメータ更新
+            grad = calculate_grad(X, result, knn_indices, knn_dists, sigmas)
+            # print("grad: ", grad)
+            # print(sigmas.shape)
+            grad = grad.reshape((X.shape[1], ))
+            # sigmas = np.maximum(sigmas - eta * grad, 1e-12)
+            sigmas = sigmas - eta * grad
+            # print(sigmas)
+            result = update_W(X, result, knn_indices, knn_dists, sigmas)
+            # print(sigmas)
+
+            # if sigma_type == 'median':
+            #     for i in range(X.shape[0]):
+            #         # W[i, knn_idx[i, :]] = np.exp(-kD[i, :] / (2 * sigma**2))
+            #         W[i, knn_idx[i, :]] = np.exp(-np.sum((((X[i] - X[knn_idx[i]]) / sigma) ** 2), axis=1))
+            # elif sigma_type == 'local_scaling':
+            #     for i in range(n):
+            #         W[i, knn_idx[i, :]] = np.exp(-kD[i, :] / (sigma[i] * sigma[knn_idx[i, :]]))
+
+            # 収束判定
+            if eta * linalg.norm(grad) <= 0.001:
+                result = result.tocoo()
+                break
+        result = result.tocoo()
+        # print(result, grad, sigmas)
+
     result.eliminate_zeros()
 
     transpose = result.transpose()
@@ -1490,6 +1806,7 @@ class UMAP(BaseEstimator):
             print("Construct fuzzy simplicial set")
 
         # Handle small cases efficiently by computing all distances
+        # if X.shape[0] < 4096:
         if X.shape[0] < 4096:
             self._small_data = True
             dmat = pairwise_distances(
@@ -1524,6 +1841,7 @@ class UMAP(BaseEstimator):
                 random_state,
                 self.verbose,
             )
+            print(self._knn_indices)
 
             self.graph_ = fuzzy_simplicial_set(
                 X,
