@@ -32,6 +32,7 @@ from scipy.spatial.distance import euclidean as scieuc
 from skhubness.neighbors import kneighbors_graph
 
 from numpy import linalg
+import time
 
 import umap.distances as dist
 
@@ -94,6 +95,13 @@ NPY_INFINITY = np.inf
 #             vals[i * n_neighbors + j] = val
 #
 #     return rows, cols, vals
+
+@numba.jit()
+def euclid_dist_knn(X, knn_indices, knn_dists):
+    for i in range(X.shape[0]):
+        for j in range(knn_dists.shape[1]):
+            knn_dists[i, j] = scieuc(X[i, :], X[knn_indices[i, j], :])
+
 
 def initialize_AEW(
     X, knn_indices, sigmas
@@ -463,22 +471,41 @@ def nearest_neighbors(
         #     np.arange(X.shape[0])[:, None], knn_indices
         # ].copy()
 
-        # MNIST or F-MNIST
-        neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=n_neighbors,
-                                          mode='distance', hubness='mutual_proximity',
-                                          hubness_params={'method': 'normal'})
+        ## MNIST or F-MNIST ###
 
-        # knn_indices = X.indices.astype(int).reshape((X.shape[0], n_neighbors))
-        # knn_dists = X.data.reshape((X.shape[0], n_neighbors))
+        # MP =======================
+        neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=n_neighbors,
+                                          mode='connectivity', hubness='mutual_proximity',
+                                          hubness_params={'method': 'normal'})
+        # # Dis-SIM ========================
+        # neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=n_neighbors,
+        #                                   mode='connectivity', hubness='dsl')
+        # # LS
+        # neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=n_neighbors,
+        #                                   mode='connectivity', hubness='local_scaling')
+
+        ## knn_indices = X.indices.astype(int).reshape((X.shape[0], n_neighbors))
+        ## knn_dists = X.data.reshape((X.shape[0], n_neighbors))
 
         knn_indices = neigbour_graph.indices.astype(int).reshape((X.shape[0], n_neighbors))
-        knn_dists = neigbour_graph.data.reshape((X.shape[0], n_neighbors))
+        # knn_dists = neigbour_graph.data.reshape((X.shape[0], n_neighbors))
+        knn_dists = np.empty((X.shape[0], n_neighbors))
+
+        start_time = time.time()
+
         for i in range(X.shape[0]):
             for j in range(n_neighbors):
                 knn_dists[i, j] = scieuc(X[i, :], X[knn_indices[i, j], :])
 
+        # euclid_dist_knn(X, knn_indices, knn_dists)
 
-        # # COIL20 or SMALL-SAMPLE
+        elapsed_time = time.time() - start_time
+        print("cal_euclid_dist:", elapsed_time)
+
+        ## MNIST or F-MNIST ###
+
+        # ## COIL20,100 or SMALL-SAMPLE ###
+        #
         # # D = euclidean_distance(X)
         # D_mp = hub_toolbox.global_scaling.mutual_proximity_gaussi(D=X, metric='distance')
         # knn_indices = fast_knn_indices(D_mp, n_neighbors)
@@ -487,6 +514,8 @@ def nearest_neighbors(
         # knn_dists = X[
         #     np.arange(X.shape[0])[:, None], knn_indices
         # ].copy()
+        #
+        # ## COIL20,100 or SMALL-SAMPLE ###
 
 
 

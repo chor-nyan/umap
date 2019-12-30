@@ -19,8 +19,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import hub_toolbox
 from hub_toolbox.distances import euclidean_distance
-# from utils import calculate_AUC
-# from utils import global_score, mantel_test
+from utils import calculate_AUC
+from utils import global_score, mantel_test
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from skhubness.neighbors import kneighbors_graph
@@ -66,70 +66,199 @@ from pandas import read_csv
 from scipy.stats import ttest_ind
 from pandas import DataFrame
 from scipy.spatial.distance import euclidean as scieuc
-from evaluate import kNN_acc, kNN_acc_kfold, kmeans_acc_ari_ami, mantel_test, visualize
-from sklearn.decomposition import TruncatedSVD
-from sklearn.decomposition import PCA
-from openTSNE import TSNE
+import keras
+from keras.datasets import cifar10
+from keras.preprocessing.image import ImageDataGenerator
+from keras.models import Sequential, Model
+from keras.layers import Dense, Dropout, Activation, Flatten
+from keras.layers import Conv2D, MaxPooling2D, BatchNormalization
+import os
 
-# sns.set(context="paper", style="white")
-sns.set()
-sns.set_style('whitegrid')
-sns.set_palette('gray')
-
-dataset = 'F-MNIST'
-# dataset = 'MNIST'
+# # sns.set(context="paper", style="white")
+# sns.set()
+# sns.set_style('whitegrid')
+# sns.set_palette('gray')
+#
+#
 # dataset = 'CIFAR10'
+#
+# if dataset == 'F-MNIST':
+#     (X, L), (X_test, L_test) = keras.datasets.fashion_mnist.load_data()
+#
+#     n = 70000
+#     # print(X.shape)
+#     # X = X[:n].reshape((n, 28 * 28))
+#     X = X.reshape((X.shape[0], 28 * 28))
+#     X_test = X_test.reshape((X_test.shape[0], 28 * 28))
+#     X = np.vstack((X, X_test))
+#     X = X[:n]
+#     X = X / 255.
+#     L = np.hstack((L, L_test))
+#     L = L.astype(int)
+#
+#     L = L[:n]
+#
+#
+# elif dataset == 'MNIST':
+#     mnist = fetch_openml('mnist_784', version=1)
+#     n = 70000
+#     X = mnist.data[:n]
+#     X = X / 255.
+#     L = mnist.target[:n].astype(int)
+#
+# elif dataset == "CIFAR10":
+#     (X, L), (X_test, L_test) = keras.datasets.cifar10.load_data()
+#
+#     n = 5000
+#     X = X.reshape((X.shape[0], -1))
+#     X_test = X_test.reshape((X_test.shape[0], -1))
+#     X = np.vstack((X, X_test))
+#     X = X[:n]
+#     X = X / 255.
+#     L = np.vstack((L, L_test))
+#     L = L.flatten()
+#     L = L.astype(int)
+#
+#
+#
+#     L = L[:n]
 
-if dataset == 'F-MNIST':
-    (X, L), (X_test, L_test) = keras.datasets.fashion_mnist.load_data()
+batch_size = 32
+num_classes = 10
+epochs = 100
+data_augmentation = False
+num_predictions = 20
+save_dir = os.path.join(os.getcwd(), 'saved_models')
+model_name = 'keras_cifar10_trained_model.h5'
 
-    n = 10000
-    # print(X.shape)
-    # X = X[:n].reshape((n, 28 * 28))
-    X = X.reshape((X.shape[0], 28 * 28))
-    X_test = X_test.reshape((X_test.shape[0], 28 * 28))
-    X = np.vstack((X, X_test))
-    X = X[:n]
-    X = X / 255.
-    L = np.hstack((L, L_test))
-    L = L.astype(int)
+# The data, split between train and test sets:
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+print('x_train shape:', x_train.shape)
+print(x_train.shape[0], 'train samples')
+print(x_test.shape[0], 'test samples')
 
-    L = L[:n]
+# Convert class vectors to binary class matrices.
+y_train = keras.utils.to_categorical(y_train, num_classes)
+y_test = keras.utils.to_categorical(y_test, num_classes)
 
+model = Sequential()
+model.add(Conv2D(32, (3, 3), padding='same',
+                 input_shape=x_train.shape[1:]))
+model.add(Activation('relu'))
+model.add(Conv2D(32, (3, 3)))
+model.add(Activation('relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
 
-elif dataset == 'MNIST':
-    mnist = fetch_openml('mnist_784', version=1)
-    n = 70000
-    X = mnist.data[:n]
-    X = X / 255.
-    L = mnist.target[:n].astype(int)
+model.add(Conv2D(64, (3, 3), padding='same'))
+model.add(Activation('relu'))
+model.add(Conv2D(64, (3, 3)))
+model.add(Activation('relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
 
-elif dataset == "CIFAR10":
-    (X, L), (X_test, L_test) = keras.datasets.cifar10.load_data()
+model.add(Flatten())
+model.add(Dense(1024))
+model.add(Activation('relu'))
+model.add(Dropout(0.5))
+model.add(Dense(num_classes))
+model.add(Activation('softmax'))
 
-    n = 20000
-    X = X.reshape((X.shape[0], -1))
-    X_test = X_test.reshape((X_test.shape[0], -1))
-    X = np.vstack((X, X_test))
-    X = X[:n]
-    X = X / 255.
-    L = np.vstack((L, L_test))
-    L = L.flatten()
-    L = L.astype(int)
+# initiate RMSprop optimizer
+opt = keras.optimizers.RMSprop(learning_rate=0.0001, decay=1e-6)
 
+# Let's train the model using RMSprop
+model.compile(loss='categorical_crossentropy',
+              optimizer=opt,
+              metrics=['accuracy'])
 
+x_train = x_train.astype('float32')
+x_test = x_test.astype('float32')
+x_train /= 255
+x_test /= 255
 
-    L = L[:n]
-
-if dataset == 'F-MNIST':
-    k = 5
-    min_dist = 0.1
-elif dataset == 'MNIST':
-    k = 10
-    min_dist = 0.001
+if not data_augmentation:
+    print('Not using data augmentation.')
+    model.fit(x_train, y_train,
+              batch_size=batch_size,
+              epochs=epochs,
+              validation_data=(x_test, y_test),
+              shuffle=True)
 else:
-    k = 10
-    min_dist = 0.001
+    print('Using real-time data augmentation.')
+    # This will do preprocessing and realtime data augmentation:
+    datagen = ImageDataGenerator(
+        featurewise_center=False,  # set input mean to 0 over the dataset
+        samplewise_center=False,  # set each sample mean to 0
+        featurewise_std_normalization=False,  # divide inputs by std of the dataset
+        samplewise_std_normalization=False,  # divide each input by its std
+        zca_whitening=False,  # apply ZCA whitening
+        zca_epsilon=1e-06,  # epsilon for ZCA whitening
+        rotation_range=0,  # randomly rotate images in the range (degrees, 0 to 180)
+        # randomly shift images horizontally (fraction of total width)
+        width_shift_range=0.1,
+        # randomly shift images vertically (fraction of total height)
+        height_shift_range=0.1,
+        shear_range=0.,  # set range for random shear
+        zoom_range=0.,  # set range for random zoom
+        channel_shift_range=0.,  # set range for random channel shifts
+        # set mode for filling points outside the input boundaries
+        fill_mode='nearest',
+        cval=0.,  # value used for fill_mode = "constant"
+        horizontal_flip=True,  # randomly flip images
+        vertical_flip=False,  # randomly flip images
+        # set rescaling factor (applied before any other transformation)
+        rescale=None,
+        # set function that will be applied on each input
+        preprocessing_function=None,
+        # image data format, either "channels_first" or "channels_last"
+        data_format=None,
+        # fraction of images reserved for validation (strictly between 0 and 1)
+        validation_split=0.0)
+
+    # Compute quantities required for feature-wise normalization
+    # (std, mean, and principal components if ZCA whitening is applied).
+    datagen.fit(x_train)
+
+    # Fit the model on the batches generated by datagen.flow().
+    model.fit_generator(datagen.flow(x_train, y_train,
+                                     batch_size=batch_size),
+                        epochs=epochs,
+                        validation_data=(x_test, y_test),
+                        workers=4)
+
+# Save model and weights
+if not os.path.isdir(save_dir):
+    os.makedirs(save_dir)
+model_path = os.path.join(save_dir, model_name)
+model.save(model_path)
+print('Saved trained model at %s ' % model_path)
+
+# Score trained model.
+scores = model.evaluate(x_test, y_test, verbose=1)
+print('Test loss:', scores[0])
+print('Test accuracy:', scores[1])
+
+
+
+
+# feat_extractor = Model(inputs=model.input,
+#                        outputs=model.get_layer('fc1').output)
+#
+# features = feat_extractor.predict(X, batch_size=batch_size)
+#
+# print('Feature:' + features.shape)
+#
+# np.save(os.path.join(out_dir, 'fc1_features.npy'), features)
+# if dataset == 'F-MNIST':
+#     k = 5
+#     min_dist = 0.1
+# elif dataset == 'MNIST':
+#     k = 10
+#     min_dist = 0.001
+# else:
+k = 15
+min_dist = 0.1
 
 emb_org_list = []
 emb_hub_list = []
@@ -137,10 +266,7 @@ emb_hub_list = []
 result_hub = []
 result_org = []
 
-time_org_list = []
-time_hub_list = []
-
-iter_n = 1
+iter = 5
 
 # seed = 42
 # reducer = umap.UMAP(n_neighbors=k, min_dist=min_dist, random_state=seed)
@@ -309,21 +435,10 @@ iter_n = 1
 # D_mp = hub_toolbox.global_scaling.mutual_proximity_gaussi(D=D, metric='distance', sample_size=100)
 # embedding = reducer.fit_transform(D_mp)
 
-pca = False
-if pca:
-    X -= np.mean(X, axis=0)
-    X = TruncatedSVD(n_components=100, random_state=0).fit_transform(X)
-
-print(X.shape)
-
-seed_lst = random.sample(range(100), k=iter_n)
-print(seed_lst)
-for i in range(iter_n):
-    # seed = random.randint(1, 50)
-    # seed = random.randint(51, 100)
-    # seed = 71
-    seed = seed_lst[i]
-
+# start = time.time()
+for i in range(iter):
+    seed = random.randint(1, 100)
+    # seed = 42
 
     # reducer = umap.UMAP(n_neighbors=k, min_dist=min_dist, metric='precomputed', random_state=seed)
     # neigbour_graph = kneighbors_graph(X, algorithm='hnsw', algorithm_params={'n_candidates': 100}, n_neighbors=k, mode='distance', hubness='mutual_proximity',
@@ -335,68 +450,16 @@ for i in range(iter_n):
     embedding_hub = reducer.fit_transform(X)
     elapsed_time1 = time.time() - start1
 
-    print('hub: ', elapsed_time1)
-
-    # X_train, X_test, Y_train, Y_test = train_test_split(embedding_hub, L, random_state=0)
-    # knc = KNeighborsClassifier(n_neighbors=1)
-    # knc.fit(X_train, Y_train)
-    # Y_pred = knc.predict(X_test)
-    # score = knc.score(X_test, Y_test)
-    # print("hub_1-NN: ", score)
-
     start2 = time.time()
     reducer = umap.UMAP(n_neighbors=k, min_dist=min_dist, random_state=seed)
     embedding_org = reducer.fit_transform(X)
     elapsed_time2 = time.time() - start2
 
-    start3 = time.time()
-    embedding_TSNE = TSNE().fit(X)
-    elapsed_time3 = time.time() - start3
-
-    # X_train, X_test, Y_train, Y_test = train_test_split(embedding_org, L, random_state=0)
-    # knc = KNeighborsClassifier(n_neighbors=1)
-    # knc.fit(X_train, Y_train)
-    # Y_pred = knc.predict(X_test)
-    # score = knc.score(X_test, Y_test)
-    # print("org_1-NN: ", score)
-
     emb_org_list.append(embedding_org)
     emb_hub_list.append(embedding_hub)
-
-    time_org_list.append(elapsed_time2)
-    time_hub_list.append(elapsed_time1)
-    print('org: ', elapsed_time2)
     print('hub: ', elapsed_time1)
-    print('TSNE: ', elapsed_time3)
+    print('org: ', elapsed_time2)
 
-    # np.savez('embed_org_' + dataset + str(n) + '_' + str(i+1) + 'th', X=X, L=L, emb=embedding_org)
-    # np.savez('embed_hub_' + dataset + str(n) + '_' + str(i+1) + 'th', X=X, L=L, emb=embedding_hub)
-
-time_org = np.array(time_org_list)
-time_hub = np.array(time_hub_list)
-
-mean_time_org = np.mean(time_org)
-mean_time_hub = np.mean(time_hub)
-
-print("org:", mean_time_org, "hub:", mean_time_hub)
-
-kNN_score_org = kNN_acc_kfold(embedding_org, L)
-kNN_score_hub = kNN_acc_kfold(embedding_hub, L)
-kNN_score_TSNE = kNN_acc_kfold(embedding_TSNE, L)
-acc1, ari1, ami1 = kmeans_acc_ari_ami(embedding_org, L)
-acc2, ari2, ami2 = kmeans_acc_ari_ami(embedding_hub, L)
-acc3, ari3, ami3 = kmeans_acc_ari_ami(embedding_TSNE, L)
-
-mantel_test(X, L, embedding_org)
-mantel_test(X, L, embedding_hub)
-mantel_test(X, L, embedding_TSNE)
-
-print(kNN_score_org, kNN_score_hub, kNN_score_TSNE)
-print([acc1, acc2, acc3], [ari1, ari2, ari3], [ami1, ami2, ami3])
-
-visualize(embedding_org, L)
-visualize(embedding_hub, L)
-visualize(embedding_TSNE, L)
 #     # r_lst_org = mantel_test(X, L, embedding_org)
 #     # r_lst_hub = mantel_test(X, L, embedding_hub)
 #     #
@@ -553,5 +616,5 @@ visualize(embedding_TSNE, L)
 # hub:  307.36033487319946
 # org:  509.9469392299652
 
-# np.savez('embed_org_' + dataset + str(n) + '_' + str(iter), X=X, L=L, emb=emb_org_list)
-# np.savez('embed_hub_' + dataset + str(n) + '_' + str(iter), X=X, L=L, emb=emb_hub_list)
+np.savez('embed_org_'+ dataset + str(n) + '_' + str(iter), X=X, L=L, emb=emb_org_list)
+np.savez('embed_hub_'+ dataset + str(n) + '_' + str(iter), X=X, L=L, emb=emb_hub_list)

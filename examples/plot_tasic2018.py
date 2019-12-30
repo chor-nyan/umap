@@ -1,6 +1,56 @@
-# 元データと低次元表現それぞれに対し精度を計算する
-# X:特徴行列, L: ラベル
-
+import umap
+from sklearn.datasets import fetch_openml
+import matplotlib.pyplot as plt
+import seaborn as sns
+import hub_toolbox
+from hub_toolbox.distances import euclidean_distance
+# from utils import calculate_AUC
+# from utils import global_score, mantel_test
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from skhubness.neighbors import kneighbors_graph
+from hub_toolbox.approximate import SuQHR
+import hub_toolbox
+import numpy as np
+from umap.utils import fast_knn_indices
+import keras
+from scipy.spatial.distance import cdist, squareform
+import umap
+from sklearn.datasets import fetch_openml
+import matplotlib.pyplot as plt
+import seaborn as sns
+import hub_toolbox
+from scipy.spatial.distance import cdist, squareform
+from hub_toolbox.distances import euclidean_distance
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from skhubness.neighbors import kneighbors_graph
+from hub_toolbox.approximate import SuQHR
+import hub_toolbox
+import numpy as np
+from umap.utils import fast_knn_indices
+import keras
+from functools import partial
+from itertools import filterfalse
+import ctypes
+import numpy as np
+from scipy.special import gammainc  # @UnresolvedImport
+from scipy.stats import norm
+from scipy.sparse import lil_matrix, csr_matrix, issparse
+from multiprocessing import Pool, cpu_count, current_process
+from multiprocessing.sharedctypes import Array
+from hub_toolbox import io
+from hub_toolbox.htlogging import ConsoleLogging
+import numba
+import umap.distances
+import time
+from numpy import savetxt
+import random
+from scipy.stats import normaltest
+from pandas import read_csv
+from scipy.stats import ttest_ind
+from pandas import DataFrame
+from scipy.spatial.distance import euclidean as scieuc
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
@@ -20,12 +70,6 @@ from hub_toolbox.distances import euclidean_distance
 from sklearn.model_selection import StratifiedShuffleSplit
 import pandas as pd
 import numba
-from sklearn import neighbors
-from sklearn.metrics.pairwise import pairwise_distances
-from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
-from sklearn.neighbors import kneighbors_graph
-from sklearn.preprocessing import StandardScaler
 
 
 def kNN_acc(X, L):
@@ -37,34 +81,15 @@ def kNN_acc(X, L):
 
     return score
 
-def kNN_acc_kfold(X, y, n_neighbors=1):
-    """
-    Returns the average 10-fold validation accuracy of a NN classifier trained on the given embeddings
-    Args:
-        X (np.array): feature matrix of size n x d
-        y (np.array): label matrix of size n x 1
-        n_neighbors (int): number of nearest neighbors to be used for inference
-    Returns:
-        score (float): Accuracy of the NN classifier
-    """
-    kf = KFold(n_splits=10)
-    kf.get_n_splits(X)
-    scores = []
-    for train_index, test_index in kf.split(X):
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-        clf = neighbors.KNeighborsClassifier(n_neighbors)
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_test)
-        scores.append(accuracy_score(y_test, y_pred))
-    return np.average(scores)
-
-def visualize(X, L, cmap='Spectral', s=10):
+def visualize(X, L, L_int=True, cmap='Spectral', s=10):
 
     sns.set(context="paper", style="white")
 
     fig, ax = plt.subplots(figsize=(12, 10))
-    color = L.astype(int)
+    if L_int:
+        color = L.astype(int)
+    else:
+        color = L
     plt.scatter(
         X[:, 0], X[:, 1], c=color, cmap=cmap, s=s
     )
@@ -186,10 +211,16 @@ def mantel_test(X, L, embed, describe = True):
         # print(X_low.shape, L_low.shape)
 
         label_idx = []
-
-        for _, i in enumerate(label_type):
+        label_type_minibatch = label_type.copy()
+        no_exist = []
+        for _, i in enumerate(label_type_minibatch):
             l_idx = np.where(L_hl == i)
-            label_idx.append(l_idx)
+            if not l_idx[0].size == 0:
+                label_idx.append(l_idx)
+            else:
+                no_exist.append(i)
+
+        label_type_minibatch = list(set(label_type_minibatch) - set(no_exist))
 
         # print(label_type)
 
@@ -198,7 +229,7 @@ def mantel_test(X, L, embed, describe = True):
         X_low_lst = []
         # for _, i in enumerate(label_type):
         #     X_high_lst.append(X_high[label_idx[i]])
-        for i, _ in enumerate(label_type):
+        for i, _ in enumerate(label_type_minibatch):
             centroid = np.mean(X_high[label_idx[i]], axis=0)
             # print(centroid)
             X_high_lst.append(centroid)
@@ -223,7 +254,7 @@ def mantel_test(X, L, embed, describe = True):
         p_lst = np.append(p_lst, p)
 
     if describe == True:
-        print(p_lst)
+        print("p-value:", p_lst)
         print(pd.DataFrame(pd.Series(r_lst.ravel()).describe()).transpose())
 
     return r_lst, p_lst
@@ -249,128 +280,67 @@ def box_plot_PCC(r_lst_org, r_lst_hub, save=False, dir='./fig_boxplot/', dataset
 
     ax.set_xlabel('Model')
     ax.set_ylabel('Pearson correlation')
-    ax.set_ylim(0.2, 0.8)
+    ax.set_ylim(0.5, 0.9)
 
     if save:
         plt.savefig(dir + dataset + '_boxplot_' + str(i+1) + '.png')
     else:
         plt.show()
 
-# # data = 'MNIST'
-# # data = 'F-MNIST'
-# # data = 'coil100'
-# data = 'NORB'
-#
-# # datasize = str(70000)
-# # datasize = str(7200)
-# datasize = str(48600)
-# # datasize =''
-# hub_org = 'org'
-# # hub_org = 'hub'
-# iter = str(10)
-#
-# # path = '/home/hino/git/umap2/examples/*hub_coil100*.npz'
-# # file_lst = glob.glob(path)
-# # # for f in os.listdir(path):
-# # #     if os.path.isfile(os.path.join(path, f)):
-# # #         file_lst.append(f)
-# # print(file_lst)
-# #
-# # emb_lst = []
-# # for i, e in enumerate(file_lst):
-# #     file_path = e
-# #     npz = np.load(file_path)
-# #     emb = npz['emb']
-# #     emb = emb.reshape((1, emb.shape[0], -1))
-# #     emb_lst.append(emb)
-# #
-# # for i in range(len(file_lst) - 1):
-# #     emb_lst[i+1] = np.vstack((emb_lst[i], emb_lst[i+1]))
-# #
-# # print(emb_lst[len(file_lst)-1].shape)
-# #
-# # X = npz['X']
-# # L = npz['L']
-# #
-# # np.savez('embed_hub_'+ "coil100" + str(7200) + '_' + str(10), X=X, L=L, emb=emb_lst[len(file_lst)-1])
-#
-# # seed_lst = [42, 97, 69, 99]
-# # emb_lst = []
-# # for i, e in enumerate(seed_lst):
-# #     file_path = "embed_hub_NORB48600_Seed:" + str(e) + ".npz"
-# #     # print(file_path)
-# #     npz = np.load(file_path)
-# #     X = npz['X']
-# #     L = npz['L']
-# #     emb = npz['emb']
-# #     emb_lst.append(emb)
-# #
-# # emb = np.vstack((emb_lst[0], emb_lst[1], emb_lst[2], emb_lst[3]))
-#
-#
-# file_path = 'embed_' + hub_org + '_' + data + datasize + '_' + iter + '.npz'
-# # file_path = "embed_org_NORB48600_Seed:42.npz"
-# # file_path = 'embed_' + hub_org + "_coil100" + str(7200) + '_' + str(10) + '.npz'
-# npz = np.load(file_path)
-# X = npz['X']
-# L = npz['L']
-# emb = npz['emb']
-# print(emb.shape)
-#
-# result_knn = []
-# result_acc = []
-# result_ari = []
-# result_ami = []
-#
-# pcc_lst = []
-# p_value = []
-#
-# for i, e in enumerate(emb):
-#
-#     # knn_acc = kNN_acc(e, L)
-#     knn_acc = kNN_acc_kfold(e, L)
-#     # acc, ari, ami = kmeans_acc_ari_ami(e, L)
-#     # save_visualization(e, L, dataset=data, hub_org=hub_org, i=i)
-#     # r, p = mantel_test(X, L, e)
-#     # pcc_lst.append(r)
-#     # p_value.append(p)
-#     # print("p-value:", p_value)
-#     # # visualize(e, L)
-#     result_knn.append(knn_acc)
-#     # result_acc.append(acc)
-#     # result_ari.append(ari)
-#     # result_ami.append(ami)
-# results = DataFrame()
-# results['knn'] = result_knn
-# print(results.describe())
-# # # PCC =======================
-# # pcc_lst = np.array(pcc_lst)
-# # np.savetxt('pcc_' + hub_org + '_' + data + '.txt', pcc_lst)
-# # file_pass = 'pcc_' + hub_org + '_' + data + '.txt'
-# #
-# # # BOX PLOT =========================================================
-# # file_path_org = 'pcc_' + "org" + '_' + data + '.txt'
-# # file_path_hub = 'pcc_' + "hub" + '_' + data + '.txt'
-# #
-# # pcc_lst_org = np.loadtxt(file_path_org)
-# # pcc_lst_hub = np.loadtxt(file_path_hub)
-# # for i in range(len(pcc_lst_org)):
-# #   box_plot_PCC(pcc_lst_org[i], pcc_lst_hub[i], save=False, dataset=data, i=i)
-#
-# # LOCAL accuracy ==========================
-# # result = np.array((result_knn, result_acc, result_ari, result_ami))
-# # # with open('examples/result_org_'+data+datasize+'.csv', 'w') as f:
-# # np.savetxt('result_' + hub_org + '_' + data + datasize + '_' + iter + '.txt', result)
-# #
-# # # 統計処理
-# # file_path = 'result_' + hub_org + '_' + data + datasize + '_' + iter + '.txt'
-# # result_lst = np.loadtxt(file_path)
-# # results = DataFrame()
-# # results['knn'] = result_lst[0]
-# # results['acc'] = result_lst[1]
-# # results['ari'] = result_lst[2]
-# # results['ami'] = result_lst[3]
-# # # descriptive stats
-# # print(results.describe())
-#
-# # 0.440667   0.291125   0.148291   0.420398
+
+
+npz = np.load("tasic2018_preprocessed.npz")
+X = npz['X']
+L = npz['L']
+c = npz['c']
+
+subdata = False
+if subdata:
+    n = 10000
+    X = X[:n]
+    L = L[:n]
+    c = c[:n]
+
+pca = False
+if pca:
+    U, s, V = np.linalg.svd(X, full_matrices=False)
+    U[:, np.sum(V, axis=1) < 0] *= -1
+    X = np.dot(U, np.diag(s))
+    X = X[:, np.argsort(s)[::-1]][:, :100]
+
+print(X.shape)
+
+emb_org_list = []
+emb_hub_list = []
+
+iter_n = 10
+
+seed_lst = random.sample(range(100), k=iter_n)
+print(seed_lst)
+for i in range(iter_n):
+    # visualize(emb, c, L_int=False, s=1)
+    # pcc, _ = mantel_test(X, L, emb)
+
+    seed = seed_lst[i]
+
+    emb_hub = umap.UMAP(init="random", metric='precomputed', random_state=seed).fit_transform(X)
+    emb_org = umap.UMAP(init="random", random_state=seed).fit_transform(X)
+
+    knn_score_hub = kNN_acc(emb_hub, L)
+    acc_hub, ari_hub, ami_hub = kmeans_acc_ari_ami(emb_hub, L)
+
+    knn_score_org = kNN_acc(emb_org, L)
+    acc_org, ari_org, ami_org = kmeans_acc_ari_ami(emb_org, L)
+    print("kNN:", knn_score_org, knn_score_hub, "acc:", acc_org, acc_hub, "ari:", ari_org, ari_hub, "ami:", ami_org, ami_hub)
+
+    pcc_org, pvalue_org = mantel_test(X, L, emb_org)
+    pcc_hub, pvalue_hub_ = mantel_test(X, L, emb_hub)
+
+    emb_org_list.append(emb_org)
+    emb_hub_list.append(emb_hub)
+
+
+np.savez('embed_org_' + "tasic2018", X=X, L=L, emb=emb_org)
+np.savez('embed_hub_' + "tasic2018", X=X, L=L, emb=emb_hub)
+
+# [84, 80, 73, 45, 11, 91, 75, 12, 64, 52]

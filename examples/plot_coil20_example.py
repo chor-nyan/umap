@@ -57,6 +57,7 @@ result_org = []
 
 iter_n = 5
 seed_lst = random.sample(range(100), k=iter_n)
+print(seed_lst)
 for i in range(iter_n):
     # seed = random.randint(0, 100)
     seed = seed_lst[i]
@@ -97,5 +98,7 @@ for i in range(iter_n):
     result_hub.append(score)
     print(result_org)
     print(result_hub)
-savetxt('/home/hino/git/umap2/examples/result_org_COIL20.csv', result_org)
-savetxt('/home/hino/git/umap2/examples/result_hubE_COIL20.csv', result_hub)
+# savetxt('/home/hino/git/umap2/examples/result_org_COIL20.csv', result_org)
+# savetxt('/home/hino/git/umap2/examples/result_hubE_COIL20.csv', result_hub)
+
+print(np.mean(np.array(result_org)), np.mean(np.array(result_hub)))
